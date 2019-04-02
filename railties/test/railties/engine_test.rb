@@ -892,6 +892,28 @@ YAML
       assert_instance_of ActiveJob::QueueAdapters::AsyncAdapter, ActiveJob::Base.queue_adapter
     end
 
+    test "seed data can be loaded when ActiveJob is not present" do
+      @plugin.write "db/seeds.rb", <<-RUBY
+        Bukkits::Engine.config.bukkits_seeds_loaded = true
+      RUBY
+
+      app_file "db/seeds.rb", <<-RUBY
+        Rails.application.config.app_seeds_loaded = true
+      RUBY
+
+      remove_frameworks(%w(active_job))
+      boot_rails
+      assert_raise(NoMethodError) { Rails.application.config.app_seeds_loaded }
+      assert_raise(NoMethodError) { Bukkits::Engine.config.bukkits_seeds_loaded }
+
+      Rails.application.config.active_job = nil if Rails.application.config.respond_to?(:active_job)
+
+      Rails.application.load_seed
+      assert Rails.application.config.app_seeds_loaded
+      Bukkits::Engine.load_seed
+      assert Bukkits::Engine.config.bukkits_seeds_loaded
+    end
+
     test "skips nonexistent seed data" do
       FileUtils.rm "#{app_path}/db/seeds.rb"
       boot_rails
@@ -1509,6 +1531,31 @@ YAML
   private
     def app
       Rails.application
+    end
+
+    def remove_frameworks(remove = [])
+      framework_order = %w(
+        rails
+        active_model
+        active_job
+        active_record
+        action_controller
+        action_mailer
+        action_view
+        sprockets
+        rails/test_unit
+      ) - remove
+      frameworks = framework_order.map { |f| "require '#{f}#{'/railtie' unless f == 'rails'}'" }.join("\n")
+
+      remove_from_config("require 'rails/all'")
+      remove_from_config("require_relative 'boot'")
+      remove.each do |remove_framework|
+        remove_from_env_config("development", "config.#{remove_framework}.*")
+      end
+      remove_from_env_config("development", "config.active_storage.*")
+
+      environment = File.read("#{app_path}/config/application.rb")
+      File.open("#{app_path}/config/application.rb", "w") { |f| f.puts frameworks + "\n" + environment }
     end
   end
 end
